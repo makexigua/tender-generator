@@ -119,24 +119,29 @@ def _write_failed_status_if_needed(
     reason: str,
 ) -> None:
     """
-    status=2 已写入后，如果后续链路失败，兜底回写 status=4，避免任务长期卡在处理中。
+    按当前业务要求：失败时不回写状态。
+    这里保留函数壳，方便后续如需恢复 status=4 兜底时直接放开注释。
     """
-    if not status2_written:
-        return
-    try:
-        fail_resp = update_biding_doc_status(
-            api_url=upd_status_api_url,
-            uid=uid,
-            tender_uid=tender_uid,
-            status=4,
-            memo=reason[:1000],  # 防止异常信息过长导致回写接口拒绝
-        )
-        _safe_print(f"[status=4兜底回写完成] uid={uid} tenderuid={tender_uid} resp={fail_resp}")
-    except Exception as write_exc:
-        _safe_print(
-            f"[status=4兜底回写失败] uid={uid} tenderuid={tender_uid} "
-            f"type={type(write_exc).__name__} detail={write_exc!r}"
-        )
+    # if not status2_written:
+    #     return
+    # try:
+    #     fail_resp = update_biding_doc_status(
+    #         api_url=upd_status_api_url,
+    #         uid=uid,
+    #         tender_uid=tender_uid,
+    #         status=4,
+    #         memo=reason[:1000],  # 防止异常信息过长导致回写接口拒绝
+    #     )
+    #     _safe_print(f"[status=4兜底回写完成] uid={uid} tenderuid={tender_uid} resp={fail_resp}")
+    # except Exception as write_exc:
+    #     _safe_print(
+    #         f"[status=4兜底回写失败] uid={uid} tenderuid={tender_uid} "
+    #         f"type={type(write_exc).__name__} detail={write_exc!r}"
+    #     )
+    _safe_print(
+        f"[失败不回写] uid={uid} tenderuid={tender_uid} "
+        f"reason={reason} status2_written={status2_written}"
+    )
 
 
 def _download_source_docs_and_build_attachment_urls(
@@ -291,26 +296,28 @@ def _process_single_item(
                 f"[钉钉网络问题] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
                 f"type={type(net_exc).__name__} detail={net_exc!r}"
             )
-            _write_failed_status_if_needed(
-                status2_written=status2_written,
-                upd_status_api_url=upd_status_api_url,
-                uid=uid,
-                tender_uid=tender_uid,
-                reason=f"调用钉钉网络失败：{type(net_exc).__name__}: {net_exc}",
-            )
+            # 按业务要求：失败时不回写 status=4。
+            # _write_failed_status_if_needed(
+            #     status2_written=status2_written,
+            #     upd_status_api_url=upd_status_api_url,
+            #     uid=uid,
+            #     tender_uid=tender_uid,
+            #     reason=f"调用钉钉网络失败：{type(net_exc).__name__}: {net_exc}",
+            # )
             return
         except Exception as call_exc:
             _safe_print(
                 f"[钉钉接口报错] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
                 f"type={type(call_exc).__name__} detail={call_exc!r}"
             )
-            _write_failed_status_if_needed(
-                status2_written=status2_written,
-                upd_status_api_url=upd_status_api_url,
-                uid=uid,
-                tender_uid=tender_uid,
-                reason=f"调用钉钉失败：{type(call_exc).__name__}: {call_exc}",
-            )
+            # 按业务要求：失败时不回写 status=4。
+            # _write_failed_status_if_needed(
+            #     status2_written=status2_written,
+            #     upd_status_api_url=upd_status_api_url,
+            #     uid=uid,
+            #     tender_uid=tender_uid,
+            #     reason=f"调用钉钉失败：{type(call_exc).__name__}: {call_exc}",
+            # )
             return
 
         # 大白话：主流程不负责把 status 改 3，还是由 MCP 的 generate-docx 来做。
@@ -324,13 +331,14 @@ def _process_single_item(
                 f"[钉钉返回疑似未完成] uid={uid} tenderuid={tender_uid} "
                 f"未检测到generate-docx成功标记，output_text={output_text!r}"
             )
-            _write_failed_status_if_needed(
-                status2_written=status2_written,
-                upd_status_api_url=upd_status_api_url,
-                uid=uid,
-                tender_uid=tender_uid,
-                reason="钉钉已响应，但未检测到 generate-docx 成功标记",
-            )
+            # 按业务要求：失败时不回写 status=4。
+            # _write_failed_status_if_needed(
+            #     status2_written=status2_written,
+            #     upd_status_api_url=upd_status_api_url,
+            #     uid=uid,
+            #     tender_uid=tender_uid,
+            #     reason="钉钉已响应，但未检测到 generate-docx 成功标记",
+            # )
             return
 
         _safe_print(
@@ -347,13 +355,14 @@ def _process_single_item(
             f"[处理失败堆栈] uid={item.get('uid')} tenderuid={item.get('tenderUid')} "
             f"traceback={traceback.format_exc()}"
         )
-        _write_failed_status_if_needed(
-            status2_written=status2_written,
-            upd_status_api_url=upd_status_api_url,
-            uid=uid,
-            tender_uid=tender_uid,
-            reason=f"主流程异常：step={step} {type(exc).__name__}: {exc}",
-        )
+        # 按业务要求：失败时不回写 status=4。
+        # _write_failed_status_if_needed(
+        #     status2_written=status2_written,
+        #     upd_status_api_url=upd_status_api_url,
+        #     uid=uid,
+        #     tender_uid=tender_uid,
+        #     reason=f"主流程异常：step={step} {type(exc).__name__}: {exc}",
+        # )
 
 
 def main() -> None:
@@ -362,7 +371,7 @@ def main() -> None:
     1) 拉取列表
     2) 对 status=1 的记录用线程池并行调用钉钉
     3) 先把任务改成 status=2 抢占，再下载招标文件到本地目录并组装 attachments
-    4) 调钉钉触发 MCP generate-docx；主流程只做失败兜底 status=4，最终成功回写仍由 MCP 完成
+    4) 调钉钉触发 MCP generate-docx；失败不回写，最终成功时由 MCP 回写 status=3
     """
     _load_env()
 

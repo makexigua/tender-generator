@@ -15,7 +15,7 @@ def update_biding_doc_status(
     回写业务状态：
     - status=2：处理中（可配 memo，如“正在生成标书”）
     - status=3：已生成（可写下载地址与 memo）
-    - status=4：生成失败（可写失败原因 memo）
+    - status=4：生成失败（当前主流程与MCP已注释失败回写逻辑，默认不会触发）
     """
     # 先放公共字段。status=2（处理中）时不强制传 bidDocLocationUrl。
     payload = {

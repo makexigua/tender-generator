@@ -100,7 +100,8 @@ def update_tender_generation_status(
 ) -> dict:
     """
     回写投标文件生成状态。
-    status=3 表示生成成功，status=4 表示生成失败。
+    status=3 表示生成成功。
+    说明：按当前业务要求，失败时不回写 status=4。
     """
     api_url = get_required_env("https://api.4-xiang.com/admin/tender/biding_doc/upd_status")
     return update_biding_doc_status(
@@ -821,29 +822,29 @@ async def call_tool(name: str, arguments: dict):
             )
             fail_text = f"生成Word或回写状态失败：{e}"
 
-            # 能拿到业务主键时，失败也在 MCP 里回写 status=4。
-            if uid and tender_uid:
-                try:
-                    fail_resp = update_tender_generation_status(
-                        uid=uid,
-                        tender_uid=tender_uid,
-                        status=4,
-                        memo=fail_text,
-                    )
-                    logger.info(
-                        "generate-docx failure status updated uid=%s tender_uid=%s status_resp=%s",
-                        uid,
-                        tender_uid,
-                        fail_resp,
-                    )
-                except Exception as write_exc:
-                    logger.exception(
-                        "generate-docx failure status update failed uid=%s tender_uid=%s error=%s",
-                        uid,
-                        tender_uid,
-                        write_exc,
-                    )
-                    fail_text = f"{fail_text}；失败状态回写也失败：{write_exc}"
+            # 按当前业务要求：失败时不回写 status=4。
+            # if uid and tender_uid:
+            #     try:
+            #         fail_resp = update_tender_generation_status(
+            #             uid=uid,
+            #             tender_uid=tender_uid,
+            #             status=4,
+            #             memo=fail_text,
+            #         )
+            #         logger.info(
+            #             "generate-docx failure status updated uid=%s tender_uid=%s status_resp=%s",
+            #             uid,
+            #             tender_uid,
+            #             fail_resp,
+            #         )
+            #     except Exception as write_exc:
+            #         logger.exception(
+            #             "generate-docx failure status update failed uid=%s tender_uid=%s error=%s",
+            #             uid,
+            #             tender_uid,
+            #             write_exc,
+            #         )
+            #         fail_text = f"{fail_text}；失败状态回写也失败：{write_exc}"
 
             return [TextContent(type="text", text=f"Error: {fail_text}")]
     else:
