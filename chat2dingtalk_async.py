@@ -187,9 +187,7 @@ def send_to_dingtalk(
     for attempt in range(1, max_attempts + 1):
         print(f"[第{attempt}次钉钉agent调用]")
         try:
-            # 钉钉网关虽然支持 HTTP/2，但这条长任务链路经代理时容易被远端断开。
-            # 这里固定走 HTTP/1.1，优先保证请求能稳定发出去。
-            with httpx.Client(http2=False, timeout=httpx.Timeout(30.0, read=1000.0)) as client:
+            with httpx.Client(http2=True, timeout=httpx.Timeout(30.0, read=1000.0)) as client:
                 response = client.post(api_url, headers=headers, json=payload)
                 print(response.status_code)
                 break
