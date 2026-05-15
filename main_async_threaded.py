@@ -7,13 +7,14 @@ import threading
 
 import requests
 
-from chat2dingtalk_async import send_to_dingtalk
+from chat2dingtalk_async import extract_output_text, extract_output_url, send_to_dingtalk
 from upd_status import update_biding_doc_status
 
 
 # 线程安全的打印锁
 _print_lock = threading.Lock()
 _FIXED_PUBLIC_DOWNLOAD_BASE_URL = "https://ai-assistant.4-xiang.com/download"
+_DEFAULT_LOCAL_DOC_DIR_NAME = "招标文件"
 
 def _safe_print(msg: str) -> None:
     with _print_lock:
@@ -54,6 +55,13 @@ def _to_bool(text: str, default: bool = False) -> bool:
     return default
 
 
+def _get_public_download_base_url() -> str:
+    """
+    和 server.py 对齐读取下载域名，避免主流程发附件地址和 MCP 回写地址不一致。
+    """
+    return os.getenv("PUBLIC_DOWNLOAD_BASE_URL", _FIXED_PUBLIC_DOWNLOAD_BASE_URL).rstrip("/")
+
+
 def _file_name_from_url(url: str, index: int) -> str:
     """
     从 URL 里提取文件名，提取失败就给一个兜底名，避免提示词里是空文件名。
@@ -82,11 +90,14 @@ def _unique_file_name(file_name: str, used_names: set[str], local_attachment_dir
 def _resolve_local_attachment_dir() -> Path:
     """
     决定附件落地目录：
-    1) 优先读环境变量 ATTACHMENT_LOCAL_DIR
-    2) 其次，如果是 root 用户，默认 /root/generated_docs（和 server.py 下载路由一致）
-    3) 否则回退到项目内「招标文件」目录
+    1) 优先读 GENERATED_DOCS_DIR（主流程和 MCP 服务共用）
+    2) 兼容历史变量 ATTACHMENT_LOCAL_DIR
+    3) 其次，如果是 root 用户，默认 /root/generated_docs
+    4) 否则回退到项目内「招标文件」目录
     """
-    env_dir = os.getenv("ATTACHMENT_LOCAL_DIR", "").strip()
+    env_dir = os.getenv("GENERATED_DOCS_DIR", "").strip()
+    if not env_dir:
+        env_dir = os.getenv("ATTACHMENT_LOCAL_DIR", "").strip()
     if env_dir:
         return Path(env_dir)
 
@@ -96,7 +107,36 @@ def _resolve_local_attachment_dir() -> Path:
     except Exception:
         pass
 
-    return Path(__file__).resolve().parent / "招标文件"
+    return Path(__file__).resolve().parent / _DEFAULT_LOCAL_DOC_DIR_NAME
+
+
+def _write_failed_status_if_needed(
+    *,
+    status2_written: bool,
+    upd_status_api_url: str,
+    uid: str,
+    tender_uid: str,
+    reason: str,
+) -> None:
+    """
+    status=2 已写入后，如果后续链路失败，兜底回写 status=4，避免任务长期卡在处理中。
+    """
+    if not status2_written:
+        return
+    try:
+        fail_resp = update_biding_doc_status(
+            api_url=upd_status_api_url,
+            uid=uid,
+            tender_uid=tender_uid,
+            status=4,
+            memo=reason[:1000],  # 防止异常信息过长导致回写接口拒绝
+        )
+        _safe_print(f"[status=4兜底回写完成] uid={uid} tenderuid={tender_uid} resp={fail_resp}")
+    except Exception as write_exc:
+        _safe_print(
+            f"[status=4兜底回写失败] uid={uid} tenderuid={tender_uid} "
+            f"type={type(write_exc).__name__} detail={write_exc!r}"
+        )
 
 
 def _download_source_docs_and_build_attachment_urls(
@@ -105,11 +145,12 @@ def _download_source_docs_and_build_attachment_urls(
 ) -> list[str]:
     """
     把招标文件先下载到本地目录，再生成可回传给钉钉的附件 URL。
-    附件 URL 固定格式：https://ai-assistant.4-xiang.com/download/<文件名>
+    附件 URL 格式：<PUBLIC_DOWNLOAD_BASE_URL>/<文件名>
     """
     local_attachment_dir.mkdir(parents=True, exist_ok=True)
     used_names: set[str] = set()
     attachment_urls: list[str] = []
+    public_download_base_url = _get_public_download_base_url()
 
     for index, source_url in enumerate(source_doc_urls):
         raw_name = _file_name_from_url(source_url, index + 1)
@@ -124,7 +165,7 @@ def _download_source_docs_and_build_attachment_urls(
                     if chunk:
                         file_obj.write(chunk)
 
-        public_url = f"{_FIXED_PUBLIC_DOWNLOAD_BASE_URL}/{quote(safe_name)}"
+        public_url = f"{public_download_base_url}/{quote(safe_name)}"
         attachment_urls.append(public_url)
 
     return attachment_urls
@@ -144,13 +185,7 @@ def _build_agent_input_text(
         f"{base_input_text}\n\n"
         "【业务回写信息】\n"
         f"- uid: {uid}\n"
-        f"- tender_uid: {tender_uid}\n\n"
-        "【生成和回写要求】\n"
-        "1. 请根据附件内容生成完整投标文件正文。\n"
-        "2. 生成完成后必须调用 MCP 工具 generate-docx。\n"
-        "3. 调用 generate-docx 时必须传 uid、tender_uid、filename、content 四个参数。\n"
-        "4. generate-docx 执行完成后会生成 Word 文件、回写业务状态，并返回可下载地址。\n"
-        "5. 不要自行编造下载地址，必须以 generate-docx 工具返回的下载地址为准。"
+        f"- tender_uid: {tender_uid}"
     )
 
 
@@ -170,12 +205,13 @@ def _process_single_item(
     处理单条任务（供线程池调用）。
     """
     step = "init"
+    uid = str(item.get("uid", "")).strip()
+    tender_uid = str(item.get("tenderUid", "")).strip()
+    status2_written = False
     try:
         if item.get("status") != 1:
             return
 
-        uid = str(item.get("uid", "")).strip()
-        tender_uid = str(item.get("tenderUid", "")).strip()
         source_doc_location = str(item.get("biddingDocLocation", "")).strip()
         if not uid or not tender_uid or not source_doc_location:
             return
@@ -200,7 +236,21 @@ def _process_single_item(
             return
         _safe_print(f"[URL处理结果] uid={uid} tenderuid={tender_uid} count={len(source_doc_urls)} urls={source_doc_urls}")
 
-        # ========== 修改点1：先下载源文件到本地，再构造 attachments 的对外访问地址 ==========
+        # 先把任务状态从 1 改成 2（处理中），用于“抢占”任务，减少重复处理。
+        # 放在下载附件之前，避免多实例并发时重复下载、重复派单。
+        step = "update_status_2"
+        _safe_print(f"[正在写标书] uid={uid} tenderuid={tender_uid} status=2")
+        status2_resp = update_biding_doc_status(
+            api_url=upd_status_api_url,
+            uid=uid,
+            tender_uid=tender_uid,
+            status=2,
+            memo="正在生成标书",
+        )
+        status2_written = True
+        _safe_print(f"[status=2回写完成] uid={uid} tenderuid={tender_uid} resp={status2_resp}")
+
+        # 再下载源文件到本地，并构造 attachments 的对外访问地址。
         step = "prepare_attachments"
         attachment_urls = _download_source_docs_and_build_attachment_urls(
             source_doc_urls=source_doc_urls,
@@ -211,18 +261,6 @@ def _process_single_item(
             f"local_dir={local_attachment_dir}"
         )
         _safe_print(f"[附件URL] uid={uid} tenderuid={tender_uid} urls={attachment_urls}")
-
-        # 先把任务状态从 1 改成 2（处理中），用于"抢占"任务，减少重复处理。
-        step = "update_status_2"
-        _safe_print(f"[正在写标书] uid={uid} tenderuid={tender_uid} status=2")
-        status2_resp = update_biding_doc_status(
-            api_url=upd_status_api_url,
-            uid=uid,
-            tender_uid=tender_uid,
-            status=2,
-            memo="正在生成标书",
-        )
-        _safe_print(f"[status=2回写完成] uid={uid} tenderuid={tender_uid} resp={status2_resp}")
 
         step = "call_dingtalk"
         _safe_print(
@@ -237,11 +275,8 @@ def _process_single_item(
             tender_uid=tender_uid,
         )
 
-        # ========== 修改点2：只负责把任务发给钉钉助理 ==========
-        # 主流程不再解析钉钉返回的文件地址，也不再回写 status=3/status=4。
-        # 文件生成、下载地址返回、成功/失败回写都由 MCP server 的 generate-docx 工具闭环处理。
         try:
-            send_to_dingtalk(
+            dingtalk_resp = send_to_dingtalk(
                 source_doc_urls=attachment_urls,
                 api_url=dingtalk_api_url,
                 bearer_token=dingtalk_bearer_token,
@@ -256,15 +291,52 @@ def _process_single_item(
                 f"[钉钉网络问题] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
                 f"type={type(net_exc).__name__} detail={net_exc!r}"
             )
+            _write_failed_status_if_needed(
+                status2_written=status2_written,
+                upd_status_api_url=upd_status_api_url,
+                uid=uid,
+                tender_uid=tender_uid,
+                reason=f"调用钉钉网络失败：{type(net_exc).__name__}: {net_exc}",
+            )
             return
         except Exception as call_exc:
             _safe_print(
                 f"[钉钉接口报错] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
                 f"type={type(call_exc).__name__} detail={call_exc!r}"
             )
+            _write_failed_status_if_needed(
+                status2_written=status2_written,
+                upd_status_api_url=upd_status_api_url,
+                uid=uid,
+                tender_uid=tender_uid,
+                reason=f"调用钉钉失败：{type(call_exc).__name__}: {call_exc}",
+            )
             return
 
-        _safe_print(f"[钉钉请求发送完成] uid={uid} tenderuid={tender_uid} 后续由MCP generate-docx回写状态")
+        # 大白话：主流程不负责把 status 改 3，还是由 MCP 的 generate-docx 来做。
+        # 但这里会校验“是否看起来真的走到了 generate-docx 成功结果”，
+        # 否则把状态兜底改成 4，避免任务一直卡在 2。
+        output_text = extract_output_text(dingtalk_resp) or ""
+        output_url = extract_output_url(dingtalk_resp, source_doc_urls=attachment_urls)
+        has_success_marker = bool(output_url) or ("状态已回写为生成成功" in output_text) or ("文件已生成" in output_text)
+        if not has_success_marker:
+            _safe_print(
+                f"[钉钉返回疑似未完成] uid={uid} tenderuid={tender_uid} "
+                f"未检测到generate-docx成功标记，output_text={output_text!r}"
+            )
+            _write_failed_status_if_needed(
+                status2_written=status2_written,
+                upd_status_api_url=upd_status_api_url,
+                uid=uid,
+                tender_uid=tender_uid,
+                reason="钉钉已响应，但未检测到 generate-docx 成功标记",
+            )
+            return
+
+        _safe_print(
+            f"[钉钉请求发送完成] uid={uid} tenderuid={tender_uid} "
+            f"已检测到MCP成功标记 output_url={output_url or '(none)'}"
+        )
 
     except Exception as exc:
         _safe_print(
@@ -275,6 +347,13 @@ def _process_single_item(
             f"[处理失败堆栈] uid={item.get('uid')} tenderuid={item.get('tenderUid')} "
             f"traceback={traceback.format_exc()}"
         )
+        _write_failed_status_if_needed(
+            status2_written=status2_written,
+            upd_status_api_url=upd_status_api_url,
+            uid=uid,
+            tender_uid=tender_uid,
+            reason=f"主流程异常：step={step} {type(exc).__name__}: {exc}",
+        )
 
 
 def main() -> None:
@@ -282,8 +361,8 @@ def main() -> None:
     主流程：
     1) 拉取列表
     2) 对 status=1 的记录用线程池并行调用钉钉
-    3) 先把招标文件下载到本地目录，再把对外下载地址作为 attachments 传给钉钉
-    4) 只负责发送钉钉请求；文件生成、下载地址、status=3/status=4 回写交给 MCP generate-docx
+    3) 先把任务改成 status=2 抢占，再下载招标文件到本地目录并组装 attachments
+    4) 调钉钉触发 MCP generate-docx；主流程只做失败兜底 status=4，最终成功回写仍由 MCP 完成
     """
     _load_env()
 
@@ -297,7 +376,7 @@ def main() -> None:
     local_attachment_dir = _resolve_local_attachment_dir()
     _safe_print(
         f"[附件配置] local_attachment_dir={local_attachment_dir} "
-        f"public_download_base_url={_FIXED_PUBLIC_DOWNLOAD_BASE_URL}"
+        f"public_download_base_url={_get_public_download_base_url()}"
     )
 
     upd_status_api_url = _require_env("BIDING_DOC_UPD_STATUS_URL")

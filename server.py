@@ -20,7 +20,6 @@ import uvicorn
 
 from docx import Document
 import uuid
-import os
 
 from upd_status import update_biding_doc_status
 
@@ -65,6 +64,31 @@ def get_public_download_base_url() -> str:
         "PUBLIC_DOWNLOAD_BASE_URL",
         "https://ai-assistant.4-xiang.com/download",
     ).rstrip("/")
+
+
+def get_generated_docs_dir() -> Path:
+    """
+    主流程和 MCP 服务共用文档目录，避免“主流程能写、下载路由找不到”的问题。
+
+    优先级：
+    1) GENERATED_DOCS_DIR
+    2) 兼容旧变量 ATTACHMENT_LOCAL_DIR
+    3) root 用户默认 /root/generated_docs
+    4) 非 root 用户默认项目内「招标文件」目录
+    """
+    env_dir = os.getenv("GENERATED_DOCS_DIR", "").strip()
+    if not env_dir:
+        env_dir = os.getenv("ATTACHMENT_LOCAL_DIR", "").strip()
+    if env_dir:
+        return Path(env_dir)
+
+    try:
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            return Path("/root/generated_docs")
+    except Exception:
+        pass
+
+    return Path(__file__).resolve().parent / "招标文件"
 
 
 def update_tender_generation_status(
@@ -605,11 +629,10 @@ def generate_docx_file(content: str, filename: str = None):
     if "投标文件" not in filename:
         filename = filename.replace(".docx", "") + "-投标文件.docx"
     
-    # 🔥 关键：统一保存到 /root/generated_docs
-    filepath = f"/root/generated_docs/{filename}"
-    # 确保目录存在（防御性代码）
-    os.makedirs("/root/generated_docs", exist_ok=True)
-    doc.add_paragraph(content)
+    docs_dir = get_generated_docs_dir()
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    filepath = str(docs_dir / filename)
+    # 上面已经按行写过正文，这里不再重复追加整段 content，避免文档内容重复一份。
     doc.save(filepath)
     return filename, filepath
     
@@ -664,14 +687,14 @@ async def list_tools() -> list[Tool]:
                     },
                     "filename": {
                         "type": "string",
-                        "description": "生成的Word文件名（必须包含.docx后缀）"
+                        "description": "可选。生成的Word文件名（不传时会自动推断并补齐.docx）"
                     },
                     "content": {
                         "type": "string",
                         "description": "Word文档内容（markdown格式）"
                     }
                 },
-                "required": ["uid", "tender_uid", "filename", "content"]
+                "required": ["uid", "tender_uid", "content"]
             }
         )
     ]
@@ -850,7 +873,7 @@ def create_http_app():
 
     async def download(request):
         filename = request.path_params["filename"]
-        filepath = f"/root/generated_docs/{filename}"
+        filepath = str(get_generated_docs_dir() / filename)
 
         if not os.path.exists(filepath):
             return JSONResponse({"error": "file not found"}, status_code=404)

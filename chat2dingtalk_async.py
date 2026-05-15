@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 from urllib.parse import unquote, urlparse
 
 import requests
-
+import httpx
 
 class DingTalkNetworkError(requests.exceptions.RequestException):
     """
@@ -181,7 +181,6 @@ def send_to_dingtalk(
     }
 
 
-    import httpx
     # 只对网络异常做重试，业务 4xx 不重试，避免无意义打接口。
     max_attempts = 3
     response = None
