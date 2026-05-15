@@ -102,7 +102,7 @@ def update_tender_generation_status(
     回写投标文件生成状态。
     status=3 表示生成成功，status=4 表示生成失败。
     """
-    api_url = get_required_env("BIDING_DOC_UPD_STATUS_URL")
+    api_url = get_required_env("https://api.4-xiang.com/admin/tender/biding_doc/upd_status")
     return update_biding_doc_status(
         api_url=api_url,
         uid=uid,
