@@ -286,32 +286,32 @@ def _process_single_item(
                 stream=dingtalk_stream,
                 thread_id=dingtalk_thread_id,
             )
-        except requests.exceptions.RequestException as net_exc:
-            _safe_print(
-                f"[钉钉网络问题] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
-                f"type={type(net_exc).__name__} detail={net_exc!r}"
-            )
-            _write_failed_status_if_needed(
-                status2_written=status2_written,
-                upd_status_api_url=upd_status_api_url,
-                uid=uid,
-                tender_uid=tender_uid,
-                reason=f"调用钉钉网络失败：{type(net_exc).__name__}: {net_exc}",
-            )
-            return
-        except Exception as call_exc:
-            _safe_print(
-                f"[钉钉接口报错] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
-                f"type={type(call_exc).__name__} detail={call_exc!r}"
-            )
-            _write_failed_status_if_needed(
-                status2_written=status2_written,
-                upd_status_api_url=upd_status_api_url,
-                uid=uid,
-                tender_uid=tender_uid,
-                reason=f"调用钉钉失败：{type(call_exc).__name__}: {call_exc}",
-            )
-            return
+        # except requests.exceptions.RequestException as net_exc:
+        #     _safe_print(
+        #         f"[钉钉网络问题] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
+        #         f"type={type(net_exc).__name__} detail={net_exc!r}"
+        #     )
+        #     _write_failed_status_if_needed(
+        #         status2_written=status2_written,
+        #         upd_status_api_url=upd_status_api_url,
+        #         uid=uid,
+        #         tender_uid=tender_uid,
+        #         reason=f"调用钉钉网络失败：{type(net_exc).__name__}: {net_exc}",
+        #     )
+        #     return
+        # except Exception as call_exc:
+        #     _safe_print(
+        #         f"[钉钉接口报错] uid={uid} tenderuid={tender_uid} step=call_dingtalk "
+        #         f"type={type(call_exc).__name__} detail={call_exc!r}"
+        #     )
+        #     _write_failed_status_if_needed(
+        #         status2_written=status2_written,
+        #         upd_status_api_url=upd_status_api_url,
+        #         uid=uid,
+        #         tender_uid=tender_uid,
+        #         reason=f"调用钉钉失败：{type(call_exc).__name__}: {call_exc}",
+        #     )
+        #     return
 
         # 大白话：主流程不负责把 status 改 3，还是由 MCP 的 generate-docx 来做。
         # 但这里会校验“是否看起来真的走到了 generate-docx 成功结果”，
