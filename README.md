@@ -1,40 +1,60 @@
 # 自动化写标系统
 
-## 主流程
-主入口是 `main_async_threaded.py`，当前逻辑如下：
+## 当前架构
+- 主入口是 `main.py`，采用 `asyncio + httpx.AsyncClient` 的纯异步并发方案。  
+- MCP 入口是 `server.py`，负责 `generate-docx` 生成文件并回写最终状态。  
 
+## 主流程
 1. 从 `.env` 读取配置。  
-2. 调列表接口 `GET /admin/tender/biding_doc/list`。  
-3. 遍历 `status == 1` 的记录。  
-4. 先将任务回写为 `status=2`（处理中，防止并发重复处理）。  
-5. 下载 `biddingDocLocation` 文件到本地共享目录，并构造 `/download/{filename}` 附件地址发给钉钉 Agent。  
-6. 由钉钉侧调用 MCP 的 `generate-docx` 工具生成标书。  
-7. MCP 在 `generate-docx` 成功后回写 `status=3` 与 `bidDocLocationUrl`；失败时会回写 `status=4`。  
+2. 调招标文件接口。  
+3. 过滤 `status == 1` 的待处理任务。  
+4. 主流程先回写 `status=2`（抢占任务，防止重复处理）。  
+5. 下载 `biddingDocLocation` 到本地共享目录。  
+6. 把本地文件映射为 `/download/{filename}` 附件地址发给钉钉 Agent。  
+7. 钉钉侧调用 MCP 的 `generate-docx` 生成标书。  
+8. 成功时回写 `status=3 + bidDocLocationUrl`；失败时回写 `status=4`。  
+
+## 状态流转
+- `status=1`：待处理。  
+- `status=2`：处理中（主流程抢占后立即写入）。  
+- `status=3`：生成成功（MCP `generate-docx` 成功后写入）。  
+- `status=4`：生成失败（主流程或 MCP 发生异常时写入）。  
+
+## 并发配置
+- `MAX_CONCURRENCY`：主流程异步并发上限，推荐优先配置。  
+- `MAX_WORKERS`：兼容旧变量；当 `MAX_CONCURRENCY` 未配置时，会回退读取它。  
+- 默认值：`10`。  
 
 ## 文件说明
-- `main_async_threaded.py`：主调度脚本（`asyncio` 并发拉取/下载/调钉钉/回写）。  
-- `chat2dingtalk_async.py`：钉钉调用与响应解析。  
+- `main.py`：主调度脚本（异步拉列表、并发处理任务、失败兜底回写）。  
+- `chat2dingtalk.py`：钉钉调用与响应解析（异步请求与重试）。  
+- `upd_status.py`：状态回写工具（同时提供同步/异步函数）。
 - `server.py`：MCP 服务（`generate-docx` 生成文档并回写最终状态）。  
-- `upd_status.py`：业务状态回写接口调用。  
 
 ## 环境变量
 - `DINGTALK_API_URL`：钉钉接口地址。  
 - `DINGTALK_BEARER_TOKEN`：钉钉鉴权 token。  
 - `DINGTALK_ASSISTANT_ID`：钉钉助手 ID。  
 - `DINGTALK_UNION_ID`：调用用户 unionId。  
-- `DINGTALK_INPUT_TEXT`：发给钉钉的提示词（必须是单行）。  
+- `DINGTALK_INPUT_TEXT`：发给钉钉的提示词。  
 - `DINGTALK_STREAM`：是否流式（`true/false`）。  
 - `DINGTALK_THREAD_ID`：可选会话 ID。  
 - `BIDING_DOC_UPD_STATUS_URL`：回写状态接口。  
-- `GENERATED_DOCS_DIR`：主流程和 MCP 共享的文档目录（推荐显式配置，避免目录不一致）。  
-- `PUBLIC_DOWNLOAD_BASE_URL`：MCP 回写下载地址前缀（默认 `https://ai-assistant.4-xiang.com/download`）。  
+- `GENERATED_DOCS_DIR`：主流程和 MCP 共享的文档目录。
+- `PUBLIC_DOWNLOAD_BASE_URL`：MCP 回写下载地址前缀。 
+- `MAX_CONCURRENCY`：异步并发上限。  
+- `MAX_WORKERS`：旧变量兼容项（未配置 `MAX_CONCURRENCY` 时才会生效）。  
+
+## 安装依赖
+```bash
+pip install -r requirements.txt
+```
 
 ## 运行
 ```bash
-python3 main_async_threaded.py
+python main.py
 ```
 
 ## 注意
 - `DINGTALK_INPUT_TEXT` 不支持多行 `.env` 写法，必须单行。  
 - 当前链路会本地落文件并通过 `/download/{filename}` 提供下载。  
-- 建议 `GENERATED_DOCS_DIR` 与 `server.py` 服务进程权限匹配。  
