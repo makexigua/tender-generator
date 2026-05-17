@@ -9,10 +9,10 @@
 4. 先将任务回写为 `status=2`（处理中，防止并发重复处理）。  
 5. 下载 `biddingDocLocation` 文件到本地共享目录，并构造 `/download/{filename}` 附件地址发给钉钉 Agent。  
 6. 由钉钉侧调用 MCP 的 `generate-docx` 工具生成标书。  
-7. MCP 在 `generate-docx` 成功后回写 `status=3` 与 `bidDocLocationUrl`；失败时不回写状态。  
+7. MCP 在 `generate-docx` 成功后回写 `status=3` 与 `bidDocLocationUrl`；失败时会回写 `status=4`。  
 
 ## 文件说明
-- `main_async_threaded.py`：主调度脚本（拉列表、抢占任务、调钉钉）。  
+- `main_async_threaded.py`：主调度脚本（`asyncio` 并发拉取/下载/调钉钉/回写）。  
 - `chat2dingtalk_async.py`：钉钉调用与响应解析。  
 - `server.py`：MCP 服务（`generate-docx` 生成文档并回写最终状态）。  
 - `upd_status.py`：业务状态回写接口调用。  

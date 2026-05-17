@@ -30,7 +30,6 @@ logger = logging.getLogger("mysql_mcp_server")
 def load_env_file():
     """
     读取项目根目录下的 .env。
-    大白话：MCP server 也要知道回写接口地址，所以这里和主流程一样补一份轻量的 .env 读取。
     """
     env_path = Path(__file__).resolve().parent / ".env"
     if not env_path.exists():
@@ -48,13 +47,6 @@ def load_env_file():
         os.environ.setdefault(key, value)
 
 
-def get_required_env(name: str) -> str:
-    value = os.getenv(name, "").strip()
-    if not value:
-        raise ValueError(f"缺少配置：{name}")
-    return value
-
-
 def get_public_download_base_url() -> str:
     """
     获取对外下载地址前缀。
@@ -62,7 +54,7 @@ def get_public_download_base_url() -> str:
     """
     return os.getenv(
         "PUBLIC_DOWNLOAD_BASE_URL",
-        "https://ai-assistant.4-xiang.com/download",
+        "<招标文件接口>",
     ).rstrip("/")
 
 
@@ -100,10 +92,10 @@ def update_tender_generation_status(
 ) -> dict:
     """
     回写投标文件生成状态。
-    status=3 表示生成成功。
-    说明：按当前业务要求，失败时不回写 status=4。
+    - status=3：生成成功
+    - status=4：生成失败
     """
-    api_url = get_required_env("https://api.4-xiang.com/admin/tender/biding_doc/upd_status")
+    api_url = "<回写接口>"
     return update_biding_doc_status(
         api_url=api_url,
         uid=uid,
@@ -775,7 +767,7 @@ async def call_tool(name: str, arguments: dict):
         tender_uid = str(arguments.get("tender_uid") or arguments.get("tenderUid") or "").strip()
         content = arguments.get("content")
         filename = arguments.get("filename")
-
+        
         try:
             if not uid:
                 raise ValueError("uid required")
@@ -822,29 +814,28 @@ async def call_tool(name: str, arguments: dict):
             )
             fail_text = f"生成Word或回写状态失败：{e}"
 
-            # 按当前业务要求：失败时不回写 status=4。
-            # if uid and tender_uid:
-            #     try:
-            #         fail_resp = update_tender_generation_status(
-            #             uid=uid,
-            #             tender_uid=tender_uid,
-            #             status=4,
-            #             memo=fail_text,
-            #         )
-            #         logger.info(
-            #             "generate-docx failure status updated uid=%s tender_uid=%s status_resp=%s",
-            #             uid,
-            #             tender_uid,
-            #             fail_resp,
-            #         )
-            #     except Exception as write_exc:
-            #         logger.exception(
-            #             "generate-docx failure status update failed uid=%s tender_uid=%s error=%s",
-            #             uid,
-            #             tender_uid,
-            #             write_exc,
-            #         )
-            #         fail_text = f"{fail_text}；失败状态回写也失败：{write_exc}"
+            if uid and tender_uid:
+                try:
+                    fail_resp = update_tender_generation_status(
+                        uid=uid,
+                        tender_uid=tender_uid,
+                        status=4,
+                        memo=fail_text,
+                    )
+                    logger.info(
+                        "generate-docx failure status updated uid=%s tender_uid=%s status_resp=%s",
+                        uid,
+                        tender_uid,
+                        fail_resp,
+                    )
+                except Exception as write_exc:
+                    logger.exception(
+                        "generate-docx failure status update failed uid=%s tender_uid=%s error=%s",
+                        uid,
+                        tender_uid,
+                        write_exc,
+                    )
+                    fail_text = f"{fail_text}；失败状态回写也失败：{write_exc}"
 
             return [TextContent(type="text", text=f"Error: {fail_text}")]
     else:

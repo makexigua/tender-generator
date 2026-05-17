@@ -2,3 +2,5 @@
 requests==2.33.1
 urllib3==2.7.0
 certifi==2025.08.03
+# 主流程 pure async 需要异步 HTTP 客户端。
+httpx==0.28.1
